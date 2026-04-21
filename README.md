@@ -1,4 +1,4 @@
-# Smart Travel Guide (No Google APIs, No Weather Key)
+# Smart Travel Guide 
 
 Smart Travel Guide is a web app that shows an interactive map, plans a simple route, lists nearby places (fuel, restaurants, hospitals, schools, hotels), and provides a basic weather helper message — all without using Google Maps or any weather API key.
 
