@@ -1,471 +1,808 @@
-// =============== CONFIG (NO WEATHER, NO KEYS) ===============
+// ===== CONFIGURATION =====
 const CONFIG = {
-    // reserved for future use
+  NOMINATIM_URL: 'https://nominatim.openstreetmap.org',
+  OVERPASS_URL: 'https://overpass-api.de/api/interpreter',
+  DEFAULT_LAT: 28.6139,
+  DEFAULT_LON: 77.2090,
+  DEFAULT_ZOOM: 5,
+  TRAVEL_SPEED_KMH: 60,
+  HISTORY_KEY: 'stg_history',
+  MAX_HISTORY: 50
 };
 
-// =============== GLOBALS ===============
-let map;
-let routeLayer;
-let currentLocation = { lat: 26.8467, lng: 80.9462 }; // Lucknow default
-let history = JSON.parse(localStorage.getItem("travelHistory")) || [];
-let recognition;
+// ===== STATE =====
+let map = null;
+let currentMarker = null;
+let routeLine = null;
+let startMarker = null;
+let endMarker = null;
+let nearbyMarkers = [];
+let currentLat = CONFIG.DEFAULT_LAT;
+let currentLon = CONFIG.DEFAULT_LON;
+let isListening = false;
+let recognition = null;
+let allPlaces = [];
+let auraCursorEffect = null;
 
-// =============== INIT LEAFLET MAP ===========================
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  initScrollAnimations();
+  initNavHighlighting();
+  initPanelTabs();
+  initVoiceVisualizer();
+  init3DTilt();
+  initAuraCursor();
+  initBackgroundTransitions();
+  renderHistory();
+});
+
+// ===== BACKGROUND TRANSITIONS =====
+function initBackgroundTransitions() {
+  const sections = {
+    'hero': 'bgHimalayas',
+    'features': 'bgTeagarden',
+    'app': 'bgHimalayas',
+    'places': 'bgKerala',
+    'weather': 'bgKerala',
+    'voice': 'bgTeagarden',
+    'history': 'bgHimalayas'
+  };
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const bgId = sections[entry.target.id];
+        if (bgId) {
+          document.querySelectorAll('.travel-background').forEach(bg => {
+            bg.style.opacity = '0';
+          });
+          const activeBg = document.getElementById(bgId);
+          if (activeBg) {
+            activeBg.style.opacity = '0.15';
+          }
+        }
+      }
+    });
+  }, { threshold: 0.3 });
+
+  Object.keys(sections).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) observer.observe(el);
+  });
+}
+
+// ===== CURSOR AURA EFFECT =====
+function initAuraCursor() {
+  const field = document.getElementById('ambientField');
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+  
+  document.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    
+    const auras = document.querySelectorAll('.aura');
+    if (auras.length > 0) {
+      const targetAura = auras[2];
+      const offsetX = (mouseX / window.innerWidth - 0.5) * 80;
+      const offsetY = (mouseY / window.innerHeight - 0.5) * 80;
+      targetAura.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+    }
+  });
+}
+
+// ===== MAP =====
 function initMap() {
-    map = L.map("map").setView([currentLocation.lat, currentLocation.lng], 7);
+  map = L.map('map', {
+    zoomControl: true,
+    attributionControl: false
+  }).setView([CONFIG.DEFAULT_LAT, CONFIG.DEFAULT_LON], CONFIG.DEFAULT_ZOOM);
 
-    // OpenStreetMap tiles (free, no key) [web:2]
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap contributors"
-    }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+  }).addTo(map);
 
-    // default marker at Lucknow
-    L.marker([currentLocation.lat, currentLocation.lng])
-        .addTo(map)
-        .bindPopup("Lucknow")
-        .openPopup();
+  map.on('click', (e) => {
+    currentLat = e.latlng.lat;
+    currentLon = e.latlng.lng;
+    setMarker(e.latlng.lat, e.latlng.lng);
+    reverseGeocode(e.latlng.lat, e.latlng.lng);
+  });
+
+  setTimeout(() => map.invalidateSize(), 300);
 }
 
-// =============== HELPER: HAVERSINE DISTANCE =================
-function haversineDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371; // Earth radius in km
-    const toRad = deg => (deg * Math.PI) / 180;
-
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRad(lat1)) *
-            Math.cos(toRad(lat2)) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // km
+function setMarker(lat, lon, popupContent) {
+  if (currentMarker) map.removeLayer(currentMarker);
+  
+  const markerIcon = L.divIcon({
+    html: `<div style="background:#b8a56f;width:24px;height:24px;border-radius:50%;border:3px solid rgba(232,229,220,0.9);box-shadow:0 2px 8px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;font-size:10px;color:#0a0c08;font-weight:700;">✦</div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    className: ''
+  });
+  
+  currentMarker = L.marker([lat, lon], { icon: markerIcon }).addTo(map);
+  if (popupContent) currentMarker.bindPopup(popupContent).openPopup();
+  map.setView([lat, lon], Math.max(map.getZoom(), 10));
 }
 
-// =============== GEOCODING: NOMINATIM + CITY FALLBACK =======
-// Try full text (college + city). If not found, fall back to city. [web:36][web:44]
-async function geocodeNominatim(query) {
-    const cleaned = query.replace(/\s+/g, " ").trim();
+function setRouteMarkers(startLat, startLon, endLat, endLon, startName, endName) {
+  if (startMarker) map.removeLayer(startMarker);
+  if (endMarker) map.removeLayer(endMarker);
+  if (routeLine) map.removeLayer(routeLine);
 
-    async function searchOnce(q) {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-            q
-        )}&addressdetails=1`;
-        const res = await fetch(url, {
-            headers: { "User-Agent": "SmartTravelGuide/1.0" }
-        });
-        if (!res.ok) {
-            throw new Error("Geocoding server error");
-        }
-        const data = await res.json();
-        return data[0] || null;
+  const startIcon = L.divIcon({
+    html: '<div style="background:#4a5a3d;width:30px;height:30px;border-radius:50%;border:3px solid rgba(232,229,220,0.9);box-shadow:0 2px 8px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;font-size:12px;color:#e8e5dc;font-weight:700;">A</div>',
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    className: ''
+  });
+
+  const endIcon = L.divIcon({
+    html: '<div style="background:#5c3d2e;width:30px;height:30px;border-radius:50%;border:3px solid rgba(232,229,220,0.9);box-shadow:0 2px 8px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;font-size:12px;color:#e8e5dc;font-weight:700;">B</div>',
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    className: ''
+  });
+
+  startMarker = L.marker([startLat, startLon], { icon: startIcon }).addTo(map)
+    .bindPopup(`<strong>Origin:</strong> ${startName}`).openPopup();
+  endMarker = L.marker([endLat, endLon], { icon: endIcon }).addTo(map)
+    .bindPopup(`<strong>Destination:</strong> ${endName}`);
+
+  routeLine = L.polyline(
+    [[startLat, startLon], [endLat, endLon]],
+    { color: '#b8a56f', weight: 2.5, dashArray: '8, 12', opacity: 0.7 }
+  ).addTo(map);
+
+  map.fitBounds(routeLine.getBounds().pad(0.2));
+  currentLat = (startLat + endLat) / 2;
+  currentLon = (startLon + endLon) / 2;
+}
+
+// ===== GEOCODING =====
+async function geocodeAddress(address, isFallback = false) {
+  const url = `${CONFIG.NOMINATIM_URL}/search?q=${encodeURIComponent(address)}&format=json&limit=1&accept-language=en`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Geocoding failed');
+    const data = await resp.json();
+    if (data && data.length > 0) {
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+        displayName: data[0].display_name,
+        fallback: isFallback,
+        originalQuery: address
+      };
     }
-
-    // 1) Full query, e.g. "Chandigarh University, Unnao, Uttar Pradesh, India"
-    let result = await searchOnce(cleaned);
-    if (result) {
-        result.__fallback = false;
-        return result;
-    }
-
-    // 2) If there is a comma, try everything except first part (usually city) [web:44]
-    if (cleaned.includes(",")) {
-        const parts = cleaned.split(",").map(p => p.trim()).filter(Boolean);
-        const last = parts.slice(1).join(", "); // drop the first part (name)
-        if (last) {
-            result = await searchOnce(last);
-            if (result) {
-                result.__fallback = true;
-                result.__fallbackQuery = last;
-                return result;
-            }
-        }
-    } else {
-        // 3) If no comma, try last word as city (rough heuristic)
-        // "Chandigarh university Unnao" -> "Unnao"
-        const tokens = cleaned.split(" ").filter(Boolean);
-        if (tokens.length > 1) {
-            const lastWord = tokens[tokens.length - 1];
-            result = await searchOnce(lastWord);
-            if (result) {
-                result.__fallback = true;
-                result.__fallbackQuery = lastWord;
-                return result;
-            }
-        }
-    }
-
-    // 4) Nothing found at all
     return null;
+  } catch (err) {
+    console.error('Geocode error:', err);
+    return null;
+  }
 }
 
-// =============== ROUTE PLANNER (ANY PLACE NAMES) ============
-document.getElementById("planRoute").addEventListener("click", async () => {
-    let start = document.getElementById("startPoint").value.trim();
-    let end = document.getElementById("endPoint").value.trim();
+async function reverseGeocode(lat, lon) {
+  const url = `${CONFIG.NOMINATIM_URL}/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=en`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Reverse geocoding failed');
+    const data = await resp.json();
+    return data.display_name || 'Unknown location';
+  } catch (err) {
+    console.error('Reverse geocode error:', err);
+    return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+  }
+}
 
-    if (!start) start = "Delhi, India";
-    if (!end) end = "Lucknow, India";
-
-    const btn = document.getElementById("planRoute");
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Planning...';
-    btn.disabled = true;
-
-    try {
-        const [startData, endData] = await Promise.all([
-            geocodeNominatim(start),
-            geocodeNominatim(end)
-        ]);
-
-        if (!startData) {
-            throw new Error(
-                `Could not find location for: "${start}". Try "Name, City, Country".`
-            );
-        }
-        if (!endData) {
-            throw new Error(
-                `Could not find location for: "${end}". Try "Name, City, Country".`
-            );
-        }
-
-        const startLoc = {
-            lat: parseFloat(startData.lat),
-            lng: parseFloat(startData.lon)
-        };
-        const endLoc = {
-            lat: parseFloat(endData.lat),
-            lng: parseFloat(endData.lon)
-        };
-
-        if (routeLayer) {
-            map.removeLayer(routeLayer);
-        }
-
-        // Draw straight line as approximate route
-        routeLayer = L.polyline(
-            [
-                [startLoc.lat, startLoc.lng],
-                [endLoc.lat, endLoc.lng]
-            ],
-            {
-                color: "#FF6B6B",
-                weight: 4,
-                opacity: 0.9,
-                dashArray: "8 4"
-            }
-        ).addTo(map);
-
-        map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
-
-        const distanceKm = haversineDistance(
-            startLoc.lat,
-            startLoc.lng,
-            endLoc.lat,
-            endLoc.lng
-        ).toFixed(1);
-        const speedKmH = 60;
-        const durationMin = Math.round((distanceKm / speedKmH) * 60);
-
-        const fromLabel = startData.display_name;
-        const toLabel = endData.display_name;
-
-        const fromInfo = startData.__fallback
-            ? `${fromLabel} <small>(city fallback for "${start}")</small>`
-            : fromLabel;
-        const toInfo = endData.__fallback
-            ? `${toLabel} <small>(city fallback for "${end}")</small>`
-            : toLabel;
-
-        document.getElementById("routeResult").innerHTML = `
-            <div class="route-info">
-                <div class="distance">${distanceKm} km</div>
-                <div class="duration">⏱️ ~${durationMin} mins (approx)</div>
-                <div><strong>From:</strong> ${fromInfo}</div>
-                <div><strong>To:</strong> ${toInfo}</div>
-                <div>📍 Straight-line estimate (not road route)</div>
-            </div>
-        `;
-
-        currentLocation = endLoc;
-        addToHistory(
-            "Route",
-            `From ${start.slice(0, 40)}... to ${end.slice(0, 40)}... (${distanceKm} km)`
-        );
-        speak(
-            `Approximate route planned! Around ${distanceKm} kilometers, taking roughly ${durationMin} minutes by car.`
-        );
-    } catch (err) {
-        document.getElementById("routeResult").innerHTML =
-            `<div class="result-box" style="color:#ff6b6b"><strong>❌ Error:</strong> ${err.message}</div>`;
-        console.error(err);
-    } finally {
-        btn.innerHTML = '<i class="fas fa-map"></i> Plan Route';
-        btn.disabled = false;
+function extractCity(query) {
+  const parts = query.split(',').map(s => s.trim());
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts.slice(i).length >= 2) {
+      return parts.slice(i).join(', ');
     }
-});
+  }
+  return query;
+}
 
-// =============== SINGLE LOCATION SEARCH (ANY PLACE) =========
-document.getElementById("searchLocation").addEventListener("click", async () => {
-    const address = document.getElementById("addressInput").value.trim();
-    if (!address) return;
+// ===== ROUTE PLANNING =====
+async function planRoute() {
+  const startInput = document.getElementById('routeStart').value.trim();
+  const endInput = document.getElementById('routeEnd').value.trim();
+  const resultDiv = document.getElementById('routeResult');
 
-    try {
-        const data = await geocodeNominatim(address);
-        if (!data) {
-            throw new Error(
-                `Location not found for: "${address}". Try "Name, City, Country".`
-            );
-        }
+  if (!startInput || !endInput) {
+    showToast('Please enter both origin and destination.', 'error');
+    return;
+  }
 
-        currentLocation = {
-            lat: parseFloat(data.lat),
-            lng: parseFloat(data.lon)
-        };
+  resultDiv.innerHTML = '<div class="loading-spinner"><div class="spinner"></div>Charting coordinates...</div>';
 
-        map.setView([currentLocation.lat, currentLocation.lng], 13);
+  let startResult = await geocodeAddress(startInput);
+  if (!startResult) {
+    const cityQuery = extractCity(startInput);
+    startResult = await geocodeAddress(cityQuery, true);
+  }
 
-        L.marker([currentLocation.lat, currentLocation.lng], {
-            icon: L.icon({
-                iconUrl: "https://maps.google.com/mapfiles/ms/icons/green-dot.png",
-                iconSize: [32, 32],
-                iconAnchor: [16, 32]
-            })
-        })
-            .addTo(map)
-            .bindPopup(data.display_name)
-            .openPopup();
+  let endResult = await geocodeAddress(endInput);
+  if (!endResult) {
+    const cityQuery = extractCity(endInput);
+    endResult = await geocodeAddress(cityQuery, true);
+  }
 
-        const label = data.display_name;
-        const info = data.__fallback
-            ? `${label} <small>(city fallback for "${address}")</small>`
-            : label;
+  if (!startResult || !endResult) {
+    resultDiv.innerHTML = '<div class="result-card"><p style="color: var(--danger);">❌ Could not geocode one or both locations. Try a different search term.</p></div>';
+    return;
+  }
 
-        document.getElementById("locationResult").innerHTML = `
-            <div class="result-box">
-                <strong>📍 Found:</strong> ${info}
-            </div>
-        `;
-        addToHistory("Location", address);
-    } catch (err) {
-        document.getElementById("locationResult").innerHTML = `
-            <div class="result-box" style="color:#ff6b6b"><strong>❌ Error:</strong> ${err.message}</div>
-        `;
-    }
-});
+  const dist = haversineDistance(startResult.lat, startResult.lon, endResult.lat, endResult.lon);
+  const timeHours = dist / CONFIG.TRAVEL_SPEED_KMH;
+  const timeMins = Math.round(timeHours * 60);
 
-// =============== VOICE ASSISTANT =============================
-document
-    .getElementById("voiceAssistantBtn")
-    .addEventListener("click", toggleVoice);
-document.getElementById("closeVoice").addEventListener("click", toggleVoice);
+  setRouteMarkers(startResult.lat, startResult.lon, endResult.lat, endResult.lon, startResult.displayName, endResult.displayName);
+
+  const fallbackNote = (startResult.fallback ? `<p style="font-size:12px;color:var(--warning);margin-top:8px;">⚠️ City fallback used for "${startInput}": ${startResult.displayName}</p>` : '') +
+    (endResult.fallback ? `<p style="font-size:12px;color:var(--warning);margin-top:4px;">⚠️ City fallback used for "${endInput}": ${endResult.displayName}</p>` : '');
+
+  resultDiv.innerHTML = `
+    <div class="result-card">
+      <div class="result-header">
+        <div class="result-icon">🗺️</div>
+        <div class="result-title">Route Charted</div>
+      </div>
+      <div class="result-address"><strong>From:</strong> ${startResult.displayName}</div>
+      <div class="result-address"><strong>To:</strong> ${endResult.displayName}</div>
+      <div class="route-info-display">
+        <div class="route-stat-card">
+          <div class="route-stat-value">${dist.toFixed(1)}</div>
+          <div class="route-stat-label">Distance (km)</div>
+        </div>
+        <div class="route-stat-card">
+          <div class="route-stat-value">${timeHours < 1 ? timeMins + ' min' : timeHours.toFixed(1) + ' hrs'}</div>
+          <div class="route-stat-label">Est. Time (${CONFIG.TRAVEL_SPEED_KMH} km/h)</div>
+        </div>
+        <div class="route-stat-card">
+          <div class="route-stat-value">~${Math.round(dist / CONFIG.TRAVEL_SPEED_KMH * 60)}</div>
+          <div class="route-stat-label">Minutes</div>
+        </div>
+      </div>
+      ${fallbackNote}
+      <p style="font-size:10px;color:var(--text-muted);margin-top:12px;">* Distance is a straight-line (great-circle) estimate, not a driving route.</p>
+    </div>
+  `;
+
+  addToHistory('route', `${startInput} → ${endInput}`, dist.toFixed(1) + ' km');
+  showToast(`Route charted: ${dist.toFixed(1)} km`, 'success');
+}
+
+function clearRoute() {
+  document.getElementById('routeStart').value = '';
+  document.getElementById('routeEnd').value = '';
+  document.getElementById('routeResult').innerHTML = '';
+  if (startMarker) map.removeLayer(startMarker);
+  if (endMarker) map.removeLayer(endMarker);
+  if (routeLine) map.removeLayer(routeLine);
+  startMarker = null; endMarker = null; routeLine = null;
+}
+
+// ===== LOCATION SEARCH =====
+async function searchLocation() {
+  const query = document.getElementById('searchInput').value.trim();
+  const resultDiv = document.getElementById('searchResult');
+
+  if (!query) {
+    showToast('Please enter a location to seek.', 'error');
+    return;
+  }
+
+  resultDiv.innerHTML = '<div class="loading-spinner"><div class="spinner"></div>Searching the archives...</div>';
+
+  let result = await geocodeAddress(query);
+  if (!result) {
+    const cityQuery = extractCity(query);
+    result = await geocodeAddress(cityQuery, true);
+  }
+
+  if (!result) {
+    resultDiv.innerHTML = '<div class="result-card"><p style="color: var(--danger);">❌ Location not found. Try a different search term.</p></div>';
+    return;
+  }
+
+  setMarker(result.lat, result.lon, result.displayName);
+  currentLat = result.lat;
+  currentLon = result.lon;
+
+  const fallbackNote = result.fallback ? `<p style="font-size:12px;color:var(--warning);margin-top:8px;">⚠️ City fallback for "${query}": ${result.displayName}</p>` : '';
+
+  resultDiv.innerHTML = `
+    <div class="result-card">
+      <div class="result-header">
+        <div class="result-icon">📍</div>
+        <div class="result-title">${result.displayName.split(',')[0]}</div>
+      </div>
+      <div class="result-address">${result.displayName}</div>
+      <div class="result-stats">
+        <div class="result-stat">🌐 <strong>Lat:</strong> ${result.lat.toFixed(4)}</div>
+        <div class="result-stat">🌐 <strong>Lon:</strong> ${result.lon.toFixed(4)}</div>
+      </div>
+      ${fallbackNote}
+    </div>
+  `;
+
+  addToHistory('search', query, result.displayName);
+  showToast(`Located: ${result.displayName.split(',')[0]}`, 'success');
+}
+
+// ===== NEARBY PLACES =====
+async function fetchNearbyPlaces() {
+  const resultDiv = document.getElementById('placesResult');
+  const gridDiv = document.getElementById('placesGrid');
+
+  resultDiv.innerHTML = '<div class="loading-spinner"><div class="spinner"></div>Surveying nearby havens...</div>';
+  gridDiv.innerHTML = '';
+
+  nearbyMarkers.forEach(m => map.removeLayer(m));
+  nearbyMarkers = [];
+
+  const radius = 10000;
+  const query = `
+    [out:json][timeout:25];
+    (
+      node["amenity"="fuel"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="restaurant"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="fast_food"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="cafe"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="hospital"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="clinic"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="doctors"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="school"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="college"](around:${radius},${currentLat},${currentLon});
+      node["amenity"="university"](around:${radius},${currentLat},${currentLon});
+      node["tourism"="hotel"](around:${radius},${currentLat},${currentLon});
+      node["tourism"="motel"](around:${radius},${currentLat},${currentLon});
+      node["tourism"="guest_house"](around:${radius},${currentLat},${currentLon});
+    );
+    out body 30;
+  `;
+
+  try {
+    const resp = await fetch(CONFIG.OVERPASS_URL, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(query),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+
+    if (!resp.ok) throw new Error('Overpass API request failed');
+    const data = await resp.json();
+    allPlaces = data.elements.map(el => {
+      let category = 'other';
+      const a = el.tags.amenity || '';
+      const t = el.tags.tourism || '';
+      if (a === 'fuel') category = 'fuel';
+      else if (['restaurant', 'fast_food', 'cafe'].includes(a)) category = 'food';
+      else if (['hospital', 'clinic', 'doctors'].includes(a)) category = 'health';
+      else if (['school', 'college', 'university'].includes(a)) category = 'education';
+      else if (['hotel', 'motel', 'guest_house'].includes(t)) category = 'hotel';
+
+      return {
+        lat: el.lat,
+        lon: el.lon,
+        name: el.tags.name || el.tags['name:en'] || 'Unnamed',
+        category: category,
+        address: [el.tags['addr:street'], el.tags['addr:city']].filter(Boolean).join(', ') || ''
+      };
+    });
+
+    renderPlaces(allPlaces);
+    resultDiv.innerHTML = `<p style="font-size:14px;color:var(--text-secondary);">Uncovered <strong style="color:var(--accent-lime);">${allPlaces.length}</strong> places within ~10km radius.</p>`;
+
+    allPlaces.slice(0, 20).forEach((place) => {
+      const colors = { fuel: '#7a8a55', food: '#b8a56f', health: '#8a4a3d', education: '#a69a5c', hotel: '#5c3d2e', other: '#5a584a' };
+      const icon = L.divIcon({
+        html: `<div style="background:${colors[place.category]};width:18px;height:18px;border-radius:50%;border:2px solid rgba(232,229,220,0.8);box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+        className: ''
+      });
+      const m = L.marker([place.lat, place.lon], { icon: icon })
+        .addTo(map)
+        .bindPopup(`<strong>${place.name}</strong><br>${place.category}`);
+      nearbyMarkers.push(m);
+    });
+
+    showToast(`Found ${allPlaces.length} nearby places`, 'success');
+  } catch (err) {
+    console.error('Overpass error:', err);
+    resultDiv.innerHTML = '<div class="result-card"><p style="color:var(--danger);">❌ Failed to fetch nearby places. The Overpass API may be temporarily unavailable.</p></div>';
+  }
+}
+
+function renderPlaces(places) {
+  const gridDiv = document.getElementById('placesGrid');
+  gridDiv.innerHTML = '';
+
+  const catIcons = { fuel: '⛽', food: '🍖', health: '⚕', education: '📖', hotel: '🏨', other: '•' };
+  const catClasses = { fuel: 'cat-fuel', food: 'cat-food', health: 'cat-health', education: 'cat-education', hotel: 'cat-hotel', other: '' };
+  const catLabels = { fuel: 'Fuel', food: 'Sustenance', health: 'Healing', education: 'Learning', hotel: 'Lodging', other: 'Other' };
+
+  places.slice(0, 30).forEach((place, idx) => {
+    const card = document.createElement('div');
+    card.className = 'place-card';
+    card.style.animationDelay = `${idx * 0.05}s`;
+    card.innerHTML = `
+      <div class="place-name">
+        ${catIcons[place.category]} ${place.name}
+        <span class="cat-badge ${catClasses[place.category]}">${catLabels[place.category]}</span>
+      </div>
+      <div class="place-address">${place.address || 'Address unavailable'}</div>
+    `;
+    card.addEventListener('click', () => {
+      setMarker(place.lat, place.lon, `<strong>${place.name}</strong><br>${place.address || ''}`);
+      currentLat = place.lat;
+      currentLon = place.lon;
+    });
+    gridDiv.appendChild(card);
+  });
+}
+
+function filterPlaces(filter, btn) {
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+
+  if (filter === 'all') {
+    renderPlaces(allPlaces);
+  } else {
+    renderPlaces(allPlaces.filter(p => p.category === filter));
+  }
+}
+
+// ===== WEATHER HELPER =====
+async function getWeatherHelper() {
+  const resultDiv = document.getElementById('weatherResult');
+  resultDiv.innerHTML = '<div class="loading-spinner"><div class="spinner"></div>Reading atmospheric conditions...</div>';
+
+  const placeName = await reverseGeocode(currentLat, currentLon);
+
+  setTimeout(() => {
+    resultDiv.innerHTML = `
+      <div class="weather-card">
+        <div class="weather-icon-large">🌤️</div>
+        <div class="weather-place">${placeName.split(',')[0]}</div>
+        <div class="weather-message">
+          You are currently observing <strong>${placeName}</strong>.<br><br>
+          For precise, real-time atmospheric data, consult your device's weather application or visit <a href="https://weather.com" target="_blank">weather.com</a> or <a href="https://openweathermap.org" target="_blank">openweathermap.org</a>.
+        </div>
+        <div class="weather-tip">
+          📍 Coordinates: ${currentLat.toFixed(4)}, ${currentLon.toFixed(4)}
+        </div>
+      </div>
+    `;
+  }, 800);
+}
+
+// ===== VOICE ASSISTANT =====
+function initVoiceVisualizer() {
+  const vis = document.getElementById('voiceVisualizer');
+  for (let i = 0; i < 30; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'voice-bar';
+    bar.style.setProperty('--bar-height', (Math.random() * 40 + 10) + 'px');
+    bar.style.animationDelay = (Math.random() * 0.5) + 's';
+    vis.appendChild(bar);
+  }
+}
 
 function toggleVoice() {
-    const panel = document.getElementById("voicePanel");
-    panel.classList.toggle("active");
-    if (panel.classList.contains("active")) initVoice();
-    else if (recognition) recognition.stop();
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    showToast('Voice recognition is not supported. Please use Chrome.', 'error');
+    return;
+  }
+
+  if (isListening) {
+    stopListening();
+  } else {
+    startListening();
+  }
 }
 
-function initVoice() {
-    if (typeof webkitSpeechRecognition === "undefined") {
-        document.getElementById("voiceStatus").innerHTML =
-            "❌ Voice not supported (use Chrome)";
-        return;
+function startListening() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onstart = () => {
+    isListening = true;
+    document.getElementById('voiceBtn').innerHTML = '<span>⏹️</span> Stop Listening';
+    document.getElementById('voiceStatus').textContent = 'Listening... Speak now';
+    document.querySelectorAll('.voice-bar').forEach(b => b.classList.add('active'));
+  };
+
+  recognition.onresult = (event) => {
+    let transcript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript;
     }
+    document.getElementById('voiceTranscript').textContent = transcript;
 
-    recognition = new webkitSpeechRecognition();
-    recognition.continuous = true;
-    recognition.lang = "en-IN";
+    if (event.results[event.results.length - 1].isFinal) {
+      processVoiceCommand(transcript);
+    }
+  };
 
-    recognition.onresult = e => {
-        const command =
-            e.results[e.results.length - 1][0].transcript.toLowerCase();
-        document.getElementById("voiceStatus").innerHTML =
-            `<i class="fas fa-check"></i> "${command}"`;
+  recognition.onerror = (event) => {
+    console.error('Speech recognition error:', event.error);
+    if (event.error !== 'no-speech') {
+      document.getElementById('voiceStatus').textContent = 'Error: ' + event.error;
+    }
+    stopListening();
+  };
 
-        if (command.includes("plan route")) {
-            const match = command.match(/from (.+) to (.+)/);
-            if (match) {
-                document.getElementById("startPoint").value = match[1].trim();
-                document.getElementById("endPoint").value = match[2].trim();
-            }
-            document.getElementById("planRoute").click();
-        } else if (command.includes("nearby")) {
-            document.getElementById("showNearby").click();
-        }
-        // Weather command removed because weather feature is removed
-    };
+  recognition.onend = () => {
+    stopListening();
+  };
 
-    recognition.start();
-    document.getElementById("voiceStatus").innerHTML =
-        '<i class="fas fa-microphone"></i> Listening...';
+  recognition.start();
 }
 
-// =============== NEARBY PLACES (fuel, food, health, edu, hotel)
-document.getElementById("showNearby").addEventListener("click", async () => {
-    const radiusKm = document.getElementById("radius").value;
-    const radiusMeters = radiusKm * 1000;
+function stopListening() {
+  isListening = false;
+  if (recognition) recognition.stop();
+  document.getElementById('voiceBtn').innerHTML = '<span>🎙️</span> Begin Listening';
+  document.getElementById('voiceStatus').textContent = 'Strike the button to begin listening';
+  document.querySelectorAll('.voice-bar').forEach(b => b.classList.remove('active'));
+}
 
-    const query = `
-        [out:json];
-        (
-          node["amenity"="fuel"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
-          way["amenity"="fuel"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
+function processVoiceCommand(text) {
+  const lower = text.toLowerCase().trim();
 
-          node["amenity"~"^(restaurant|fast_food|cafe)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
-          way["amenity"~"^(restaurant|fast_food|cafe)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
+  if (lower.includes('plan route') || lower.includes('navigate')) {
+    const match = lower.match(/plan\s+route\s+(?:from\s+)?(.+?)\s+to\s+(.+)/i) ||
+                  lower.match(/navigate\s+(?:from\s+)?(.+?)\s+to\s+(.+)/i);
+    if (match) {
+      document.getElementById('routeStart').value = match[1].trim();
+      document.getElementById('routeEnd').value = match[2].trim();
+      document.getElementById('voiceStatus').textContent = `Charting route: ${match[1].trim()} → ${match[2].trim()}`;
+      planRoute();
+    } else {
+      document.getElementById('voiceStatus').textContent = 'Could not parse route. Try: "plan route from Delhi to Lucknow"';
+    }
+  } else if (lower.includes('search') || lower.includes('find') || lower.includes('look for') || lower.includes('show me')) {
+    const searchFor = lower.replace(/^(search|find|look\s+for|show\s+me)\s+(for\s+)?/i, '').trim();
+    document.getElementById('searchInput').value = searchFor;
+    document.getElementById('voiceStatus').textContent = `Seeking: ${searchFor}`;
+    searchLocation();
+  } else if (lower.includes('nearby')) {
+    document.getElementById('voiceStatus').textContent = 'Surveying nearby havens...';
+    fetchNearbyPlaces();
+  } else if (lower.includes('weather')) {
+    document.getElementById('voiceStatus').textContent = 'Reading atmospheric conditions...';
+    getWeatherHelper();
+  } else {
+    document.getElementById('voiceStatus').textContent = `Command unrecognized: "${text}". Try: "plan route from X to Y", "search for Z", "show nearby", or "show weather"`;
+  }
+}
 
-          node["amenity"~"^(hospital|clinic|doctors)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
-          way["amenity"~"^(hospital|clinic|doctors)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
+function simulateVoice(text) {
+  document.getElementById('voiceTranscript').textContent = text;
+  document.getElementById('voiceStatus').textContent = `Simulated: "${text}"`;
+  processVoiceCommand(text);
+}
 
-          node["amenity"~"^(school|college|university)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
-          way["amenity"~"^(school|college|university)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
+// ===== HISTORY =====
+function getHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(CONFIG.HISTORY_KEY) || '[]');
+  } catch { return []; }
+}
 
-          node["tourism"~"^(hotel|motel|guest_house)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
-          way["tourism"~"^(hotel|motel|guest_house)$"](around:${radiusMeters},${currentLocation.lat},${currentLocation.lng});
-        );
-        out center 40;
+function saveHistory(items) {
+  localStorage.setItem(CONFIG.HISTORY_KEY, JSON.stringify(items));
+}
+
+function addToHistory(type, name, meta) {
+  let items = getHistory();
+  items.unshift({
+    type: type,
+    name: name,
+    meta: meta,
+    timestamp: Date.now()
+  });
+  if (items.length > CONFIG.MAX_HISTORY) items = items.slice(0, CONFIG.MAX_HISTORY);
+  saveHistory(items);
+  renderHistory();
+}
+
+function renderHistory() {
+  const listDiv = document.getElementById('historyList');
+  const items = getHistory();
+
+  if (items.length === 0) {
+    listDiv.innerHTML = '<div class="history-empty"><p>The archive awaits. Begin exploring to inscribe your journey.</p></div>';
+    return;
+  }
+
+  listDiv.innerHTML = items.map((item, idx) => {
+    const typeClass = item.type === 'route' ? 'route' : 'search';
+    const icon = item.type === 'route' ? '🗺️' : '📍';
+    const time = new Date(item.timestamp);
+    const timeStr = time.toLocaleDateString() + ' ' + time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return `
+      <div class="history-item" onclick="replayHistory(${idx})">
+        <div class="history-type ${typeClass}">${icon}</div>
+        <div class="history-text">
+          <div class="history-name">${item.name}</div>
+          <div class="history-meta">${item.meta} · ${timeStr}</div>
+        </div>
+        <button class="history-delete" onclick="event.stopPropagation(); deleteHistoryItem(${idx})" title="Delete">✕</button>
+      </div>
     `;
+  }).join('');
+}
 
-    try {
-        const res = await fetch("https://overpass-api.de/api/interpreter", {
-            method: "POST",
-            body: query
-        });
+function replayHistory(idx) {
+  const items = getHistory();
+  if (!items[idx]) return;
+  const item = items[idx];
 
-        if (!res.ok) {
-            throw new Error("Server busy, please try again later");
-        }
-
-        const data = await res.json();
-        const places = data.elements.slice(0, 30);
-
-        if (!places.length) {
-            document.getElementById("nearbyPlaces").innerHTML = `
-                <div class="result-box">
-                    <strong>🏙️ No nearby fuel/food/hospitals/schools/hotels within ${radiusKm} km.</strong>
-                </div>
-            `;
-            return;
-        }
-
-        const categoryFromTags = tags => {
-            if (!tags) return "place";
-            if (tags.amenity) return tags.amenity;
-            if (tags.tourism) return tags.tourism;
-            return "place";
-        };
-
-        const placesHtml = places
-            .map((p, i) => {
-                const name =
-                    p.tags && p.tags.name
-                        ? p.tags.name
-                        : "Unnamed " + categoryFromTags(p.tags);
-                const category = categoryFromTags(p.tags);
-                return `
-                <div style="display:flex;justify-content:space-between;padding:12px;border-bottom:1px solid #eee;">
-                    <span>${i + 1}. ${name}</span>
-                    <span style="font-size:12px;padding:2px 6px;border-radius:12px;background:#f1f3f5;color:#555;">
-                        ${category}
-                    </span>
-                </div>
-            `;
-            })
-            .join("");
-
-        document.getElementById("nearbyPlaces").innerHTML = `
-            <div class="result-box">
-                <strong>🏙️ Nearby fuel, food, health, education & hotels (${places.length})</strong>
-                <div style="max-height:260px;overflow:auto;">${placesHtml}</div>
-            </div>
-        `;
-    } catch (err) {
-        document.getElementById("nearbyPlaces").innerHTML = `
-            <div class="result-box" style="color:#ff6b6b">
-                <strong>❌ Nearby:</strong> ${err.message}
-            </div>
-        `;
+  if (item.type === 'route') {
+    const parts = item.name.split(' → ');
+    if (parts.length === 2) {
+      document.getElementById('routeStart').value = parts[0];
+      document.getElementById('routeEnd').value = parts[1];
+      scrollToSection('app');
+      setTimeout(() => planRoute(), 500);
     }
-});
-
-// =============== SPEAK =======================================
-function speak(text) {
-    if (!("speechSynthesis" in window)) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.95;
-    speechSynthesis.speak(utterance);
+  } else {
+    document.getElementById('searchInput').value = item.name;
+    scrollToSection('app');
+    document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
+    document.querySelector('[data-panel="search"]').classList.add('active');
+    document.getElementById('panel-search').classList.add('active');
+    setTimeout(() => searchLocation(), 500);
+  }
 }
 
-// =============== HISTORY =====================================
-function addToHistory(title, content) {
-    history.unshift({
-        title,
-        content,
-        time: new Date().toLocaleString("en-IN")
+function deleteHistoryItem(idx) {
+  let items = getHistory();
+  items.splice(idx, 1);
+  saveHistory(items);
+  renderHistory();
+  showToast('Entry removed from archive', 'info');
+}
+
+function clearHistory() {
+  localStorage.removeItem(CONFIG.HISTORY_KEY);
+  renderHistory();
+  showToast('Archive cleared', 'info');
+}
+
+// ===== UTILITIES =====
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function scrollToSection(id) {
+  document.getElementById(id).scrollIntoView({ behavior: 'smooth' });
+}
+
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+  toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span> ${message}`;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.animation = 'toastOut 0.4s var(--transition-smooth) forwards';
+    setTimeout(() => toast.remove(), 400);
+  }, 3000);
+}
+
+// ===== SCROLL ANIMATIONS =====
+function initScrollAnimations() {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
     });
-    if (history.length > 15) history.pop();
-    localStorage.setItem("travelHistory", JSON.stringify(history));
-    updateHistory();
+  }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+  window.addEventListener('scroll', () => {
+    const scrollTop = window.scrollY;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = (scrollTop / docHeight) * 100;
+    document.getElementById('scrollProgress').style.width = progress + '%';
+  });
 }
 
-function updateHistory() {
-    document.getElementById("historyList").innerHTML =
-        history
-            .map(
-                item => `
-            <li onclick="document.getElementById('addressInput').value='${item.content
-                .slice(0, 30)
-                .replace(/'/g, "\\'")}';document.getElementById('searchLocation').click()">
-                <strong>${item.title}</strong> <small>${item.time}</small><br>${item.content}
-            </li>
-        `
-            )
-            .join("") ||
-        '<li style="color:#666;text-align:center;">No trips planned yet</li>';
+// ===== NAV HIGHLIGHTING =====
+function initNavHighlighting() {
+  const navBtns = document.querySelectorAll('.nav-btn');
+  const sections = ['hero', 'features', 'app', 'places', 'weather', 'voice', 'history'];
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navBtns.forEach(btn => btn.classList.remove('active'));
+        const activeBtn = document.querySelector(`.nav-btn[data-section="${entry.target.id}"]`);
+        if (activeBtn) activeBtn.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+
+  sections.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) observer.observe(el);
+  });
+
+  navBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      scrollToSection(btn.dataset.section);
+    });
+  });
 }
 
-// =============== OTHER BUTTONS ===============================
-document.getElementById("darkToggle").addEventListener("click", () => {
-    document.body.classList.toggle("dark");
-});
+// ===== PANEL TABS =====
+function initPanelTabs() {
+  document.querySelectorAll('.panel-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const parent = tab.closest('.panel-container');
+      parent.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      parent.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      const panelId = 'panel-' + tab.dataset.panel;
+      document.getElementById(panelId).classList.add('active');
+    });
+  });
+}
 
-document.getElementById("clearHistory").addEventListener("click", () => {
-    history = [];
-    localStorage.removeItem("travelHistory");
-    updateHistory();
-});
+// ===== 3D TILT =====
+function init3DTilt() {
+  document.querySelectorAll('.tilt-card').forEach(card => {
+    card.addEventListener('mousemove', (e) => {
+      const rect = card.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const rotateX = (y - centerY) / centerY * -6;
+      const rotateY = (x - centerX) / centerX * 6;
+      card.style.transform = `perspective(800px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) translateY(-6px)`;
+    });
 
-// Simple placeholders for text/image features
-document.getElementById("translateBtn").addEventListener("click", () => {
-    const text = document.getElementById("textInput").value.trim();
-    document.getElementById("textResult").innerHTML = text
-        ? `<div class="result-box">Translation feature not implemented yet.</div>`
-        : "";
-});
-document.getElementById("summarizeBtn").addEventListener("click", () => {
-    const text = document.getElementById("textInput").value.trim();
-    document.getElementById("textResult").innerHTML = text
-        ? `<div class="result-box">Summary feature not implemented yet.</div>`
-        : "";
-});
-document.getElementById("speakBtn").addEventListener("click", () => {
-    const text = document.getElementById("textInput").value.trim();
-    if (text) speak(text);
-});
+    card.addEventListener('mouseleave', () => {
+      card.style.transform = 'perspective(800px) rotateX(0) rotateY(0) translateY(0)';
+    });
+  });
+}
 
-document.getElementById("analyzeImage").addEventListener("click", () => {
-    document.getElementById("imageResult").innerHTML =
-        '<div class="result-box">Image analysis feature not implemented yet.</div>';
-});
-
-// =============== INIT =======================================
-document.addEventListener("DOMContentLoaded", () => {
-    updateHistory();
-    initMap();
-    document.getElementById("startPoint").value = "Delhi, India";
-    document.getElementById("endPoint").value = "Lucknow, India";
+// ===== KEYBOARD =====
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const activePanel = document.querySelector('.panel-content.active');
+    if (activePanel) {
+      if (activePanel.id === 'panel-route') {
+        planRoute();
+      } else if (activePanel.id === 'panel-search') {
+        searchLocation();
+      }
+    }
+  }
 });

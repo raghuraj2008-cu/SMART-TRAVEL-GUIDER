@@ -1,103 +1,374 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Travel Guide - Route Planner (Leaflet)</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <!-- Leaflet CSS (free, no key) -->
-    <link
-        rel="stylesheet"
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-        crossorigin=""
-    />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Travel Guide — Dark Cartography</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/cinzel@5.0.18/400.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/cinzel@5.0.18/600.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/cinzel@5.0.18/700.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.0.20/300.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.0.20/400.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.0.20/500.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.0.20/600.css" rel="stylesheet">
+<link href="style.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1><i class="fas fa-route"></i> Smart Travel Guide</h1>
-            <div>
-                <button id="darkToggle"><i class="fas fa-moon"></i></button>
-                <button id="voiceAssistantBtn"><i class="fas fa-microphone"></i></button>
-                <button id="clearHistory"><i class="fas fa-trash"></i></button>
-            </div>
-        </header>
-        
-        <!-- Voice Assistant -->
-        <div id="voicePanel" class="voice-panel">
-            <button id="closeVoice"><i class="fas fa-times"></i></button>
-            <div id="voiceStatus">Say "plan route from Delhi to Lucknow"...</div>
+
+<div class="noise-overlay" id="noiseOverlay"></div>
+<div class="scroll-progress" id="scrollProgress"></div>
+
+<!-- Travel Background Images -->
+<div class="travel-background travel-bg-himalayas" id="bgHimalayas"></div>
+<div class="travel-background travel-bg-teagarden" id="bgTeagarden" style="opacity: 0;"></div>
+<div class="travel-background travel-bg-kerala" id="bgKerala" style="opacity: 0;"></div>
+
+<div class="ambient-field" id="ambientField">
+  <div class="aura aura-1"></div>
+  <div class="aura aura-2"></div>
+  <div class="aura aura-3"></div>
+</div>
+
+<nav class="nav-bar" id="navBar">
+  <button class="nav-btn active" data-section="hero">
+    <span class="nav-icon"></span>Origin
+  </button>
+  <button class="nav-btn" data-section="features">
+    <span class="nav-icon"></span>Archives
+  </button>
+  <button class="nav-btn" data-section="app">
+    <span class="nav-icon"></span>Cartographer
+  </button>
+  <button class="nav-btn" data-section="places">
+    <span class="nav-icon"></span>Vicinity
+  </button>
+  <button class="nav-btn" data-section="weather">
+    <span class="nav-icon"></span>Elements
+  </button>
+  <button class="nav-btn" data-section="voice">
+    <span class="nav-icon"></span>Voice
+  </button>
+  <button class="nav-btn" data-section="history">
+    <span class="nav-icon"></span>Chronicle
+  </button>
+</nav>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<section class="layer hero" id="hero">
+  <div class="hero-frame">
+    <div class="hero-badge">
+      <span class="pulse"></span>
+      <span class="badge-text">Open Cartography System</span>
+    </div>
+    <h1 class="hero-title">
+      <span class="title-line">Smart</span>
+      <span class="title-line"><span class="accent-text">Travel Guide</span></span>
+    </h1>
+    <p class="hero-subtitle">
+      Chart your passage through the known world. Discover routes, uncover nearby havens, and navigate with precision — all powered by open cartography, no keys required.
+    </p>
+    <div class="hero-cta-group">
+      <button class="btn-primary" onclick="scrollToSection('app')">Begin Journey →</button>
+      <button class="btn-ghost" onclick="scrollToSection('features')">Explore Archives</button>
+    </div>
+    <div class="hero-manuscript">
+      <img class="hero-image" src="https://image.qwenlm.ai/public_source/71426cec-fd0b-4fb4-b028-82bf56fe9a8e/1ffa8e88c-952a-46fe-87e3-7a8898e4d7d8.png" alt="Ancient cartographic visualization">
+      <div class="manuscript-border"></div>
+    </div>
+    <div class="hero-sigils">
+      <div class="sigil-item">
+        <div class="sigil-number">Open</div>
+        <div class="sigil-label">No Keys</div>
+      </div>
+      <div class="sigil-item">
+        <div class="sigil-number">5</div>
+        <div class="sigil-label">Place Types</div>
+      </div>
+      <div class="sigil-item">
+        <div class="sigil-number">∞</div>
+        <div class="sigil-label">Places</div>
+      </div>
+      <div class="sigil-item">
+        <div class="sigil-number">🎙️</div>
+        <div class="sigil-label">Voice</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<section class="layer" id="features">
+  <div class="panel-section">
+    <div class="section-header reveal">
+      <div class="section-tag">✦ Capabilities</div>
+      <h2 class="section-title">Everything you need<br><span class="accent-text">to explore</span></h2>
+      <p class="section-desc">A complete cartographic system powered by OpenStreetMap, Nominatim geocoding, and Overpass API — no subscriptions, no keys.</p>
+    </div>
+    <div class="feature-cards-3d">
+      <div class="feature-card-3d tilt-card reveal reveal-delay-1" data-tilt>
+        <div class="card-header">
+          <div class="card-icon-wrap blue">🗺️</div>
+          <span class="card-ornament"></span>
         </div>
+        <h3 class="card-title">Route Planner</h3>
+        <p class="card-text">Chart courses between any two points. Geocodes complex addresses and calculates approximate distance and passage time.</p>
+        <div class="card-glow"></div>
+      </div>
+      <div class="feature-card-3d tilt-card reveal reveal-delay-2" data-tilt>
+        <div class="card-header">
+          <div class="card-icon-wrap teal">🔍</div>
+          <span class="card-ornament"></span>
+        </div>
+        <h3 class="card-title">Smart Search</h3>
+        <p class="card-text">Seek any locale — cities, colleges, hospitals, landmarks. Intelligent fallback resolves partial names.</p>
+        <div class="card-glow"></div>
+      </div>
+      <div class="feature-card-3d tilt-card reveal reveal-delay-3" data-tilt>
+        <div class="card-header">
+          <div class="card-icon-wrap pink">📍</div>
+          <span class="card-ornament"></span>
+        </div>
+        <h3 class="card-title">Nearby Places</h3>
+        <p class="card-text">Uncover fuel, sustenance, healing, learning, and lodging near any coordinate through OpenStreetMap data.</p>
+        <div class="card-glow"></div>
+      </div>
+      <div class="feature-card-3d tilt-card reveal reveal-delay-4" data-tilt>
+        <div class="card-header">
+          <div class="card-icon-wrap green">☁️</div>
+          <span class="card-ornament"></span>
+        </div>
+        <h3 class="card-title">Weather Helper</h3>
+        <p class="card-text">Receive location-aware atmospheric guidance. No weather keys needed — just helpful orientation.</p>
+        <div class="card-glow"></div>
+      </div>
+      <div class="feature-card-3d tilt-card reveal reveal-delay-5" data-tilt>
+        <div class="card-header">
+          <div class="card-icon-wrap red">🗣️</div>
+          <span class="card-ornament"></span>
+        </div>
+        <h3 class="card-title">Voice Command</h3>
+        <p class="card-text">Direct the system with your voice. Chart routes, seek places, check the elements — hands-free.</p>
+        <div class="card-glow"></div>
+      </div>
+      <div class="feature-card-3d tilt-card reveal reveal-delay-5" data-tilt>
+        <div class="card-header">
+          <div class="card-icon-wrap yellow">📜</div>
+          <span class="card-ornament"></span>
+        </div>
+        <h3 class="card-title">Chronicle</h3>
+        <p class="card-text">All journeys and searches preserved locally. Summon any past expedition instantly from your records.</p>
+        <div class="card-glow"></div>
+      </div>
+    </div>
+  </div>
+</section>
 
-        <!-- ROUTE PLANNER SECTION -->
-        <section class="route-section">
-            <h2><i class="fas fa-directions"></i> Route Planner</h2>
-            <div class="route-inputs">
-                <div>
-                    <label>🚩 Starting Point</label>
-                    <input type="text" id="startPoint" placeholder="Delhi, India">
-                </div>
-                <div>
-                    <label>🎯 Ending Point</label>
-                    <input type="text" id="endPoint" placeholder="Lucknow, India">
-                </div>
-            </div>
-            <button id="planRoute"><i class="fas fa-map"></i> Plan Route</button>
-            <div id="routeResult"></div>
-        </section>
+<div class="section-divider"></div>
 
-        <section class="location-section">
-            <h2><i class="fas fa-map-marker-alt"></i> Single Location</h2>
-            <input type="text" id="addressInput" placeholder="Lucknow, India" value="Lucknow, India">
-            <button id="searchLocation">🔍 Search</button>
-            <div id="locationResult"></div>
-        </section>
-
-        <!-- Image Analysis – left as visual demo only -->
-        <section class="upload-section">
-            <h2><i class="fas fa-image"></i> Image Analysis</h2>
-            <input type="file" id="imageInput" accept="image/*">
-            <button id="analyzeImage">Analyze</button>
-            <div id="imageResult"></div>
-        </section>
-
-        <section class="text-section">
-            <h2><i class="fas fa-comment"></i> Text Input</h2>
-            <textarea id="textInput" placeholder="Enter travel notes..."></textarea>
-            <div class="quick-actions">
-                <button id="translateBtn"><i class="fas fa-language"></i></button>
-                <button id="summarizeBtn"><i class="fas fa-compress"></i></button>
-                <button id="speakBtn"><i class="fas fa-volume-up"></i></button>
-            </div>
-            <div id="textResult"></div>
-        </section>
-
-        <section class="map-section">
-            <h2><i class="fas fa-globe"></i> Map</h2>
-            <div class="map-controls">
-                <input type="number" id="radius" value="10" min="1" max="50">
-                <button id="showNearby">Nearby</button>
-                <button id="getWeather">Weather</button>
-            </div>
-            <div id="map" style="height: 400px;"></div>
-            <div id="nearbyPlaces"></div>
-            <div id="weatherInfo"></div>
-        </section>
-
-        <section class="history-section">
-            <h2><i class="fas fa-history"></i> History</h2>
-            <ul id="historyList"></ul>
-        </section>
+<section class="layer" id="app">
+  <div class="panel-section">
+    <div class="section-header reveal">
+      <div class="section-tag">✦ Cartographer</div>
+      <h2 class="section-title">Chart your <span class="accent-text">passage</span></h2>
+      <p class="section-desc">Plan routes, seek locations, and uncover nearby havens — all within one instrument.</p>
     </div>
 
-    <!-- Leaflet JS -->
-    <script
-        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-        crossorigin=""
-    ></script>
-    <script src="script.js"></script>
+    <div class="panel-container reveal">
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-panel="route">🗺️ Route</button>
+        <button class="panel-tab" data-panel="search">🔍 Locate</button>
+      </div>
+
+      <div class="panel-content active" id="panel-route">
+        <div class="input-group">
+          <div class="input-row">
+            <div class="input-field">
+              <label>Origin</label>
+              <input type="text" id="routeStart" placeholder="e.g. Chandigarh University, Mohali, Punjab" autocomplete="off">
+            </div>
+            <div class="input-field">
+              <label>Destination</label>
+              <input type="text" id="routeEnd" placeholder="e.g. XYZ College, Lucknow, Uttar Pradesh" autocomplete="off">
+            </div>
+          </div>
+          <div class="action-row">
+            <button class="btn-action primary" onclick="planRoute()">
+              <span>🗺️</span> Chart Route
+            </button>
+            <button class="btn-action secondary" onclick="clearRoute()">
+              <span>✕</span> Clear
+            </button>
+          </div>
+        </div>
+        <div id="routeResult"></div>
+      </div>
+
+      <div class="panel-content" id="panel-search">
+        <div class="input-group">
+          <div class="input-field">
+            <label>Seek Location</label>
+            <input type="text" id="searchInput" placeholder="e.g. Red Fort, Delhi" autocomplete="off">
+          </div>
+          <div class="action-row">
+            <button class="btn-action primary" onclick="searchLocation()">
+              <span>🔍</span> Locate
+            </button>
+          </div>
+        </div>
+        <div id="searchResult"></div>
+      </div>
+    </div>
+
+    <div id="map-container" class="reveal map-frame" style="margin-top: 28px;">
+      <div class="map-ornament-corner map-ornament-tl"></div>
+      <div class="map-ornament-corner map-ornament-tr"></div>
+      <div class="map-ornament-corner map-ornament-bl"></div>
+      <div class="map-ornament-corner map-ornament-br"></div>
+      <div id="map"></div>
+      <div class="map-overlay-label">
+        <span class="map-label-text">Interactive Cartography</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<section class="layer" id="places">
+  <div class="panel-section">
+    <div class="section-header reveal">
+      <div class="section-tag">✦ Vicinity</div>
+      <h2 class="section-title">Nearby <span class="accent-text">havens</span></h2>
+      <p class="section-desc">Uncover fuel, sustenance, healing, learning, and lodging around any coordinate.</p>
+    </div>
+
+    <div class="panel-container reveal">
+      <div class="panel-content active" style="padding: 36px;">
+        <p class="vicinity-intro">Select a coordinate on the map or use route/search to fix a location, then discover what lies near.</p>
+        <div class="filter-chips">
+          <button class="filter-chip active" data-filter="all" onclick="filterPlaces('all', this)">All</button>
+          <button class="filter-chip" data-filter="fuel" onclick="filterPlaces('fuel', this)">⛽ Fuel</button>
+          <button class="filter-chip" data-filter="food" onclick="filterPlaces('food', this)">🍖 Sustenance</button>
+          <button class="filter-chip" data-filter="health" onclick="filterPlaces('health', this)">⚕ Healing</button>
+          <button class="filter-chip" data-filter="education" onclick="filterPlaces('education', this)">📖 Learning</button>
+          <button class="filter-chip" data-filter="hotel" onclick="filterPlaces('hotel', this)">🏨 Lodging</button>
+        </div>
+        <div class="action-row">
+          <button class="btn-action success" onclick="fetchNearbyPlaces()">
+            <span>📍</span> Reveal Nearby
+          </button>
+        </div>
+        <div id="placesResult"></div>
+        <div class="places-grid" id="placesGrid"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<section class="layer" id="weather">
+  <div class="panel-section">
+    <div class="section-header reveal">
+      <div class="section-tag">✦ Elements</div>
+      <h2 class="section-title">Atmospheric <span class="accent-text">readings</span></h2>
+      <p class="section-desc">Receive location-aware atmospheric guidance without requiring any keys.</p>
+    </div>
+
+    <div class="panel-container reveal">
+      <div class="panel-content active" style="padding: 36px;">
+        <div class="action-row" style="justify-content: center;">
+          <button class="btn-action primary" onclick="getWeatherHelper()">
+            <span>🌤️</span> Read Elements
+          </button>
+        </div>
+        <div id="weatherResult"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<section class="layer" id="voice">
+  <div class="panel-section">
+    <div class="section-header reveal">
+      <div class="section-tag">✦ Voice</div>
+      <h2 class="section-title">Speak to <span class="accent-text">navigate</span></h2>
+      <p class="section-desc">Command the system with your voice — chart courses, seek locales, check the elements.</p>
+    </div>
+
+    <div class="panel-container reveal">
+      <div class="panel-content active" style="padding: 36px;">
+        <div class="voice-visualizer" id="voiceVisualizer"></div>
+        <div class="voice-status" id="voiceStatus">Strike the button to begin listening</div>
+        <div class="action-row" style="justify-content: center;">
+          <button class="btn-action primary" id="voiceBtn" onclick="toggleVoice()">
+            <span>🎙️</span> Begin Listening
+          </button>
+        </div>
+        <div class="voice-transcript" id="voiceTranscript">Your speech shall appear here...</div>
+        <div class="voice-commands">
+          <div class="voice-cmd" onclick="simulateVoice('plan route from Delhi to Lucknow')">
+            <span>🗣️</span> "plan route from Delhi to Lucknow"
+          </div>
+          <div class="voice-cmd" onclick="simulateVoice('search for Red Fort Delhi')">
+            <span>🗣️</span> "search for Red Fort Delhi"
+          </div>
+          <div class="voice-cmd" onclick="simulateVoice('show nearby')">
+            <span>🗣️</span> "show nearby"
+          </div>
+          <div class="voice-cmd" onclick="simulateVoice('show weather')">
+            <span>🗣️</span> "show weather"
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<section class="layer" id="history">
+  <div class="panel-section">
+    <div class="section-header reveal">
+      <div class="section-tag">✦ Chronicle</div>
+      <h2 class="section-title">Your <span class="accent-text">passages</span></h2>
+      <p class="section-desc">Recent routes and location searches preserved in the local archive for swift return.</p>
+    </div>
+
+    <div class="panel-container reveal">
+      <div class="panel-content active" style="padding: 36px;">
+        <div class="action-row" style="margin-bottom: 20px;">
+          <button class="btn-action secondary" onclick="clearHistory()">
+            <span>🗑️</span> Clear Archive
+          </button>
+        </div>
+        <div class="history-list" id="historyList">
+          <div class="history-empty">
+            <p>The archive awaits. Begin exploring to inscribe your journey.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <p class="footer-text">
+    Forged with <a href="https://leafletjs.com" target="_blank">Leaflet</a>, 
+    <a href="https://nominatim.openstreetmap.org" target="_blank">Nominatim</a>, 
+    <a href="https://overpass-api.de" target="_blank">Overpass API</a> · 
+    OpenStreetMap data © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>
+  </p>
+  <p class="footer-text" style="margin-top: 8px;">Smart Travel Guide — No keys, no tracking, just open cartography.</p>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="script.js"></script>
 </body>
 </html>
